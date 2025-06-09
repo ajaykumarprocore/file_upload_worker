@@ -89,15 +89,10 @@ export default {
 
 				// Make GET request to the Upload URLs for the part
 				const getUrl = UPLOAD_PART_DETAILS_URL(companyId, projectId, uploadId, partNumber);
-				console.log("Making API request to get upload URLs for the part:", getUrl);
-				const cookie = request.headers.get('Cookie') || '';
-				console.log("Forwarding cookie:", cookie);
-				const procoreCookie = request.headers.get('Procore-cookie') || '';
-				console.log("Forwarding Procore cookie:", procoreCookie);
+				console.log("Requesting Object Storage Service Upload URL from Upload Service:", getUrl);
 				const getResponse = await fetch(getUrl, {
 					headers: {
-						'Procore-Fas-User-Id': '789', //TODO: Get this from the request headers
-						'Cookie': procoreCookie
+						'Procore-Fas-User-Id': '789'
 					}
 				});
 				
@@ -107,7 +102,7 @@ export default {
 				}
 
 				const partData = await getResponse.json();
-				console.log("GET Response:", {
+				console.log("Object Storage Service Upload URL Response:", {
 					status: getResponse.status,
 					headers: Object.fromEntries(getResponse.headers.entries()),
 					data: partData
@@ -115,7 +110,8 @@ export default {
 
 				// Extract the required fields from the response
 				const { id, url: partUrl, headers: partHeaders } = partData;
-				console.log("Part details:", {
+				console.log("BEGIN: Uploading contents to Permanent Storage");
+				console.log("Object Storage Upload Request Details:", {
 					id,
 					url: partUrl,
 					headers: partHeaders
@@ -125,7 +121,7 @@ export default {
 				const { 'Content-MD5': _, ...headersWithoutMD5 } = partHeaders;
 
 				// Make PUT request to partUrl with partHeaders
-				console.log("Making PUT request to:", partUrl);
+				console.log("Uploading contents to Object Storage using PUT", partUrl);
 				const putResponse = await fetch(partUrl, {
 					method: 'PUT',
 					headers: {
@@ -145,14 +141,15 @@ export default {
 					headers: Object.fromEntries(putResponse.headers.entries())
 				});
 
+				console.log("END: Uploading contents to Permanent Storage");
+
 				// Get ETag from response headers
 				const etag = putResponse.headers.get('etag') || putResponse.headers.get('ETag');
-				console.log("All PUT response headers:", Object.fromEntries(putResponse.headers.entries()));
 				console.log("ETag from PUT response:", etag);
 
 				// Make PATCH request to update segments
 				const patchUrl = UPDATE_PARTS_URL(companyId, projectId, uploadId);
-				console.log("Making PATCH request to:", patchUrl);
+				console.log("Completing Uploads by making PATCH request to Upload Service:", patchUrl);
 
 				console.log("Body:", JSON.stringify({
 					segments: [{
