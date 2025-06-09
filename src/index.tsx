@@ -2,15 +2,14 @@ import { ExportedHandler, R2Bucket, R2UploadedPart, Request, ExecutionContext } 
 
 // API URL Constants
 const API_BASE_URL = 'https://staging1.procoretech-qa.com/rest/v2.0';
-const API_COMPANY_ID = '8';
-const API_PROJECT_ID = '8';
 
 // API Endpoints
-const UPLOAD_PART_URL = `${API_BASE_URL}/companies/${API_COMPANY_ID}/projects/${API_PROJECT_ID}/file_uploads`;
-const UPLOAD_PART_DETAILS_URL = (uploadId: string, partNumber: string) => 
-	`${UPLOAD_PART_URL}/${uploadId}/parts/${partNumber}`;
-const UPDATE_PARTS_URL = (uploadId: string) => 
-	`${UPLOAD_PART_URL}/${uploadId}`;
+const UPLOAD_PART_URL = (companyId: string, projectId: string) => 
+	`${API_BASE_URL}/companies/${companyId}/projects/${projectId}/file_uploads`;
+const UPLOAD_PART_DETAILS_URL = (companyId: string, projectId: string, uploadId: string, partNumber: string) => 
+	`${UPLOAD_PART_URL(companyId, projectId)}/${uploadId}/parts/${partNumber}`;
+const UPDATE_PARTS_URL = (companyId: string, projectId: string, uploadId: string) => 
+	`${UPLOAD_PART_URL(companyId, projectId)}/${uploadId}`;
 
 /**
  * Welcome to Cloudflare Workers! This is your first worker.
@@ -30,8 +29,8 @@ function addCorsHeaders(response: Response): Response {
 	const headers = new Headers(response.headers);
 	headers.set('Access-Control-Allow-Origin', 'https://staging1.procoretech-qa.com');
 	headers.set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS');
-	headers.set('Access-Control-Allow-Headers', 'Content-Type, Procore-Fas-User-Id, x-csrf-token, Cookie');
-	headers.set('Access-Control-Allow-Credentials', 'true');
+	headers.set('Access-Control-Allow-Headers', 'Content-Type, Procore-Fas-User-Id, x-csrf-token, Cookie, Procore-cookie, ETag');
+	headers.set('Access-Control-Expose-Headers', 'ETag');
 	return new Response(response.body, {
 		status: response.status,
 		statusText: response.statusText,
@@ -48,8 +47,8 @@ export default {
 				headers: {
 					'Access-Control-Allow-Origin': 'https://staging1.procoretech-qa.com',
 					'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, PATCH, OPTIONS',
-					'Access-Control-Allow-Headers': 'Content-Type, Procore-Fas-User-Id, x-csrf-token, Cookie',
-					'Access-Control-Allow-Credentials': 'true',
+					'Access-Control-Allow-Headers': 'Content-Type, Procore-Fas-User-Id, x-csrf-token, Cookie, Procore-cookie, ETag',
+					'Access-Control-Expose-Headers': 'ETag',
 					'Access-Control-Max-Age': '86400'
 				}
 			}));
@@ -89,7 +88,7 @@ export default {
 				}
 
 				// Make GET request to the Upload URLs for the part
-				const getUrl = UPLOAD_PART_DETAILS_URL(uploadId, partNumber);
+				const getUrl = UPLOAD_PART_DETAILS_URL(companyId, projectId, uploadId, partNumber);
 				console.log("Making API request to get upload URLs for the part:", getUrl);
 				const cookie = request.headers.get('Cookie') || '';
 				console.log("Forwarding cookie:", cookie);
@@ -122,14 +121,18 @@ export default {
 					headers: partHeaders
 				});
 
+				// Remove Content-MD5 header if present
+				const { 'Content-MD5': _, ...headersWithoutMD5 } = partHeaders;
+
 				// Make PUT request to partUrl with partHeaders
 				console.log("Making PUT request to:", partUrl);
 				const putResponse = await fetch(partUrl, {
 					method: 'PUT',
 					headers: {
-						...partHeaders
+						...headersWithoutMD5,
+						// Content-Length will be automatically set by the fetch API when using a stream
 					},
-					body: await request.arrayBuffer()
+					body: request.body as unknown as BodyInit // Cast to BodyInit to satisfy the type system
 				});
 
 				if (!putResponse.ok) {
@@ -143,30 +146,30 @@ export default {
 				});
 
 				// Get ETag from response headers
-				const etag = putResponse.headers.get('etag');
+				const etag = putResponse.headers.get('etag') || putResponse.headers.get('ETag');
+				console.log("All PUT response headers:", Object.fromEntries(putResponse.headers.entries()));
 				console.log("ETag from PUT response:", etag);
 
 				// Make PATCH request to update segments
-				const patchUrl = UPDATE_PARTS_URL(uploadId);
+				const patchUrl = UPDATE_PARTS_URL(companyId, projectId, uploadId);
 				console.log("Making PATCH request to:", patchUrl);
 
 				console.log("Body:", JSON.stringify({
 					segments: [{
 						etag: etag,
-						part_number: parseInt(partNumber)
+						partId: partNumber.toString()
 					}]
 				}));
 				const patchResponse = await fetch(patchUrl, {
 					method: 'PATCH',
 					headers: {
 						'Content-Type': 'application/json',
-						'Procore-Fas-User-Id': '789',
-						'Cookie': cookie
+						'Procore-Fas-User-Id': '789'
 					},
 					body: JSON.stringify({
 						segments: [{
 							etag: etag,
-							part_number: parseInt(partNumber)
+							part_id: partNumber.toString()
 						}]
 					})
 				});
@@ -176,9 +179,11 @@ export default {
 					return addCorsHeaders(new Response(`Failed to update segments: ${patchResponse.statusText}`, { status: patchResponse.status }));
 				}
 
+				const patchResponseBody = await patchResponse.json();
 				console.log("PATCH Response:", {
 					status: patchResponse.status,
-					headers: Object.fromEntries(patchResponse.headers.entries())
+					headers: Object.fromEntries(patchResponse.headers.entries()),
+					body: patchResponseBody
 				});
 
 				// Return success response with ETag

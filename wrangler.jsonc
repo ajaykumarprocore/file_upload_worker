@@ -28,7 +28,7 @@
 		"binding": "MY_BUCKET",
 		"bucket_name": "test-pcore-bucket"
 		}
-	]
+	],
 
 	/**
 	 * Environment Variables
